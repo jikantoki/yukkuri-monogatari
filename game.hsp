@@ -1,0 +1,1422 @@
+;パチ作る.hsp
+debug = 1;1にするとデバッグモードになる
+
+;ライブラリ宣言、あとライブラリ作る
+
+#include "hspogg.as"
+#include "kernel32.as"
+dmmini;重要
+randomize;重要
+goto *start;deffuncは記述だけで、実行しなくていい
+
+#deffunc printlog str string
+	now_time = "" + gettime(1) + "/" + gettime(3) + " " + gettime(4) + ":" + gettime(5) + ":" + gettime(6) + "." + gettime(7)
+	objprm log_id,logtxt + "\n" + now_time + " " + string
+	sendmsg objinfo(log_id, 2),0xB1,0x7FFFFFFF,0x7FFFFFFF
+	sendmsg objinfo(log_id, 2),0xB7
+	return
+
+	
+#deffunc await2 int time
+	if hayai = 0{
+		;通常プレイ
+		StartTick=GetTickCount()
+		repeat
+			await 10
+			if (GetTickCount()-StartTick) >= time : break
+		loop
+	}else{
+		;早送り有効
+		await 1
+	}
+	return
+
+
+#define global now_ut time2ut(gettime(0),gettime(1),gettime(3),gettime(4),gettime(5),gettime(6))
+
+#defcfunc time2ut int _y,int _m,int d,int _h,int _mi,int _s
+	y=_y
+	m=_m-2
+	if m<=0 : m+=12 : y--
+	days=365*y + y/4 + y/400 - y/100 + 30*m+59*m/100 + d - 678912 - 40587
+	//↑指定した日の修正ユリウス日をフリーゲルの公式から求め、
+	//さらに1970年1月1日の修正ユリウス日である40587を引く。
+	h=_h-9	//指定した時から日本とUTCの時差である9を引く。
+	mi=_mi-0	//日本に関して言えば、分の修正はなし。
+	s=_s+0	//閏秒を考慮しない場合。考慮する場合は↓のコメントアウトを外す。
+	//s=_s+37
+	return days*86400 + h*3600 + mi*60 + s
+
+#deffunc ut2time var ry,var rm,var rd,var rh,var rmi,var rs,int _ut
+	ut=_ut-0	//閏秒を考慮しない場合。考慮する場合は↓のコメントアウトを外す。
+	//ut=_ut-37
+	add_h=9	//日本とUTCとの時差
+	add_m=0	//日本とUTCとの時差(分)
+	ut+=add_h*3600+add_m*60
+	days=ut/86400 : a=ut\86400
+	rh=a/3600 : a\=3600
+	rmi=a/60 : rs=a\60
+	//
+	n=(days+40587)+678881	//(days+40587)で修正ユリウス日に変換。以下、フリーゲルの公式で日付を求める。
+	a=3+4*((4*(n+1)/146097+1)*3/4+n)
+	b=(a\1461)/4*5+2
+	ry=a/1461
+	rm=b/153+3
+	rd=(b\153)/5+1
+	if rm>=13 : rm-=12 : ry++
+	return
+
+;#include "ovplay.as"
+;exist "ovplay.dll"
+;if strsize = -1 : end
+
+;変数と定数の定義
+*start
+mes "起動中"
+#packopt name "game"
+
+#define GAME_TITLE "Pゆっくり物語49"
+#define VERSION "β1.0"
+
+#define OWNER "ときえのき\nhttps://enoki.xyz\nhttps://twitter.com/jikantoki"
+CREDIT = {"
+	ときえのきオリジナル曲
+	https://enoki.xyz/youtube
+
+	Nanaka Sakashita by Senses Circuit
+	https://www.senses-circuit.com/
+
+	Peritune
+	https://peritune.com
+
+	DOVA=SYNDROME
+	https://dova-s.jp
+
+	zukizuki BGM
+	https://zukizukibgm.com
+
+	ニコニコモンズ
+	https://commons.nicovideo.jp
+
+	D'elf
+	https://d-elf.com
+
+	Light Canvas
+	https://lightcanvas0123.wixsite.com
+
+	Photo AC
+	https://photo-ac.com
+
+	きつねゆっくり
+	http://www.nicotalk.com/charasozai_kt.html
+"}
+
+;フォント設定
+#define MAINFONT "游ゴシック"
+#define FSIZE 26
+#define FSIZE_KAITEN 80
+
+;画面IDの設定
+#define INFOSCR 0
+#define GAME 1
+#define LOG 2
+#define SETTING 3
+#define BUF 4
+#define BUF_S 5;BUFの縮小画面、デバッグ用
+
+;画面サイズの設定
+#define SCREEN_X 1200
+#define SCREEN_Y 800
+#define ISCREEN_Y 130
+#define LSCREEN_X 460
+#define SSCREEN_X 300
+
+;画像関連の設定
+#define IMGSIZE 300.0;画像の基本サイズ、必ず少数にする
+#define IMGSIZE_L 400;画像の巨大化サイズ
+#define IMGSIZE_LR 900;右打ち左打ちの画像Xサイズ
+#define IMGSIZE_LRY 500;右打ち左打ちの画像Yサイズ
+#define IMGNUM 0;ナンバー画像のY座標
+#define IMGNUM_L 1000;Lサイズのナンバー画像のY座標
+#define IMGCHA IMGSIZE;キャラクター画像の座標
+#define IMGCHA_L IMGNUM_L + IMGSIZE_L
+#define IMGCUT 2000;カットイン画像のY座標
+#define IMGCUT_X 1000;カットイン画像の横幅
+#define IMGBG 3000;背景画像のY座標
+#define IMGKOKUCHI_X SCREEN_X * 4;告知画像のX座標
+#define IMGOTHER 4500;その他各画像のY座標
+#define IMGOTHER_S 5000;小さいその他各画像のY座標
+#define CUTIN_Y 500;文字カットインをどこで使うか
+#define FL 30;ミリ秒単位で画像の更新頻度を指定
+
+;よく使う公式
+#define CENTER_UP 0;画像のY中央値を敢えてズラす
+#define IMGCENTER_Y SCREEN_Y / 2 - ( IMGSIZE / 2 ) - CENTER_UP;画像をY中央に配置
+#define IMGCENTER_YL SCREEN_Y / 2 - ( IMGSIZE_L / 2 ) - CENTER_UP;Lサイズの画像をY中央に配置
+#define IMGCENTER_YLR SCREEN_Y / 2 - ( IMGSIZE_LRY / 2 ) - CENTER_UP;Lサイズの画像をY中央に配置
+#define IMGLEFT SCREEN_X / 5 * 1 - ( IMGSIZE / 2 );画像をX左に配置
+#define IMGRIGHT SCREEN_X / 5 * 4 - ( IMGSIZE / 2 );画像をX右に配置
+#define IMGCENTER SCREEN_X / 2 - ( IMGSIZE_L / 2 );Lサイズの画像をX中央に配置
+#define IMGCENTER_S SCREEN_X / 2 - ( IMGSIZE / 2 );画像をX中央に配置
+
+#enum BGM1
+dmmload "OGG\\bgm1.ogg",BGM1
+dmmvol BGM1,-300
+dmmloop BGM1,1
+
+#enum BGM2
+dmmload "OGG\\bgm2.ogg",BGM2
+dmmvol BGM2,-300
+dmmloop BGM2,1
+
+#enum BGM3
+dmmload "OGG\\bgm3.ogg",BGM3
+dmmvol BGM3,-300
+dmmloop BGM3,1
+
+#enum BGM4
+dmmload "OGG\\bgm4.ogg",BGM4
+dmmvol BGM4,-300
+dmmloop BGM4,1
+
+#enum BGM5
+dmmload "OGG\\bgm5.ogg",BGM5
+dmmvol BGM5,-300
+dmmloop BGM5,1
+
+#enum BGMTENJO
+dmmload "OGG\\bgmtenjo.ogg",BGMTENJO
+dmmvol BGMTENJO,-300
+dmmloop BGMTENJO,0
+
+#enum BATTLE1
+dmmload "OGG\\battle1.ogg",BATTLE1
+dmmvol BATTLE1,-300
+dmmloop BATTLE1,1
+
+#enum ABATTLE
+dmmload "OGG\\abattle.ogg",ABATTLE
+dmmvol ABATTLE,-300
+dmmloop ABATTLE,1
+
+#enum ABATTLEMAE
+dmmload "OGG\\abattlemae.ogg",ABATTLEMAE
+dmmvol ABATTLEMAE,-300
+dmmloop ABATTLEMAE,1
+
+#enum RUSH1
+dmmload "OGG\\rush1.ogg",RUSH1
+dmmvol RUSH1,-300
+dmmloop RUSH1,1
+
+#enum RUSH2
+dmmload "OGG\\rush2.ogg",RUSH2
+dmmvol RUSH2,-300
+dmmloop RUSH2,1
+
+#enum REACHSE;リーチ！
+mmload "MP3\\reach.mp3",REACHSE
+#enum HAZURESE;テレッ
+mmload "MP3\\hazure.mp3",HAZURE
+#enum TITLESE;大工の源さん！（迫真）
+mmload "MP3\\title.mp3",TITLESE
+#enum SETSE;左右のマスのけつあなが確定
+mmload "MP3\\set.mp3",SETSE
+mmvol SETSE,-100
+
+#enum CUTSE1;カットイン1
+mmload "MP3\\cutin1.mp3",CUTSE1
+#enum LEFTSE;左打ちに戻してください
+mmload "MP3\\left.mp3",LEFTSE
+#enum RIGHTSE
+mmload "MP3\\right.mp3",RIGHTSE
+
+;設定項目
+horyu = 0;保留の初期値
+horyu_max = 8;保留の最大値
+kakuritsu = 49;当選確率（1/n）
+reach = 15;外れ時のリーチ演出確率（%）
+tenjo = 70;天井、0で無効
+dedama = 500;当たり一回に対する出玉
+rush_kakuritsu = 80;ラッシュ突入確率（%）
+rush_next = 93;ラッシュ継続確率（%）
+rush_kaisu = 8;ラッシュ継続抽選回数
+rush_dedama = 1500;ラッシュ出玉
+
+;初期値の設定
+kaiten = 0;回転数
+kaiten_kei = 0;累計回転数
+kaiten_kei2 = 0;平均当たり回数計算用
+atari_kai = 0;当たり数
+
+;ガチャの初期値
+left = 1
+center = 2
+right = 3
+
+;変えないでください
+playing = 0;内部変数、抽選中は1になる
+miging = 0;内部変数、右打ち状態は1になる
+pocket = 0;内部変数、ポケットフラグ
+jitan = 0;内部変数、1は時短
+bgmtrack = 1;内部変数、BGM変更用
+atari = 0;内部変数、1だと強制当たり、2だと強制ラッシュ
+loghide = 0;1にすると初期値でログ画面が消える
+autoplay = 0;オートプレイフラグ
+select = 0;内部変数、0～9でキャラクタを指定
+hidari_cnt = 0;左打ちに戻してください用
+hayai = 0;内部変数、早送りフラグ
+kokuchi = 0;内部変数、0か1で告知モード切替
+kokuching = 0;内部変数、告知選択中のみ1になる
+
+;この変数絶対いらんやろ
+nabeatsu_num = 1;3の倍数でアホになります
+
+;ウィンドウの初期化
+screen INFOSCR,SCREEN_X,ISCREEN_Y,4+8,10,10;情報ウィンドウ
+title GAME_TITLE + " - 情報"
+igamescreen_x = ginfo(4)
+igamescreen_y = ginfo(5)
+
+screen GAME,SCREEN_X,SCREEN_Y,4,igamescreen_x,igamescreen_y + ISCREEN_Y + 40;メインウィンドウ
+game_name = GAME_TITLE + " - " + VERSION
+title game_name
+gamescreen_x = ginfo(4)
+gamescreen_y = ginfo(5)
+
+;画像の準備
+buffer BUF,IMGSIZE * 30,IMGSIZE * 20;バッファ
+cls 4
+if debug = 1 {
+	screen BUF_S,IMGSIZE * 3,IMGSIZE * 2;スモールバッファ
+	title "バッファ縮小画面"
+	gsel BUF
+}
+await 10
+;基本画像
+repeat 10
+	pos cnt * IMGSIZE,IMGNUM
+	picload "PNG\\" + cnt + ".png",1;1～10のpng読み込み
+	pos cnt * IMGSIZE,IMGCHA
+	picload "PNG\\" + cnt + "c.png",1;1～10のpng読み込み
+	pos cnt * IMGSIZE_L,IMGNUM_L
+	gzoom IMGSIZE_L,IMGSIZE_L,BUF,cnt * IMGSIZE,IMGNUM,IMGSIZE,IMGSIZE;拡大して貼り付け
+	pos cnt * IMGSIZE_L,IMGCHA_L
+	gzoom IMGSIZE_L,IMGSIZE_L,BUF,cnt * IMGSIZE,IMGCHA,IMGSIZE,IMGSIZE;拡大して貼り付け
+loop
+;その他画像
+pos 0,IMGCUT
+picload "PNG\\cutin1.png",1
+
+pos 0,IMGBG
+picload "PNG\\bg1.jpg",1
+
+pos IMGKOKUCHI_X,IMGBG
+picload "PNG\\battle_kokuchi.png",1
+
+pos IMGKOKUCHI_X + ( SCREEN_X / 2 ),IMGBG
+picload "PNG\\kanzen_kokuchi.png",1
+
+pos IMGKOKUCHI_X + SCREEN_X,IMGBG
+picload "PNG\\kokuchi_riser.png",1
+
+#define IMGSP SCREEN_X
+pos IMGSP,IMGBG
+picload "PNG\\splash.png",1
+
+#define IMGHORYU_X 0
+pos IMGHORYU_X,IMGOTHER
+picload "PNG\\horyu.png",1
+
+pos IMGHORYU_X,IMGOTHER_S
+gzoom IMGSIZE / 2,IMGSIZE / 2,BUF,IMGHORYU_X,IMGOTHER,IMGSIZE,IMGSIZE
+
+#define IMGSARA_X IMGSIZE
+pos IMGSARA_X,IMGOTHER
+picload "PNG\\sara.png",1
+
+pos IMGSARA_X,IMGOTHER_S
+gzoom IMGSIZE / 2,IMGSIZE / 2,BUF,IMGSARA_X,IMGOTHER,IMGSIZE,IMGSIZE
+
+#define IMGTITLE IMGSIZE * 2
+pos IMGTITLE,IMGOTHER
+picload "PNG\\title.png",1
+
+#define IMGLEFT_X IMGSIZE * 5
+pos IMGLEFT_X,IMGOTHER
+picload "PNG\\left.png",1
+
+#define IMGRIGHT_X IMGSIZE * 5 + IMGSIZE_LR
+pos IMGRIGHT_X,IMGOTHER
+picload "PNG\\right.png",1
+
+#define IMGPUSH IMGSIZE * 11
+pos IMGPUSH,IMGOTHER
+picload "PNG\\push.png",1
+
+pos IMGRIGHT_X,IMGOTHER_S
+gzoom IMGSIZE_LR / 4,IMGSIZE_LRY / 4,BUF,IMGRIGHT_X,IMGOTHER,IMGSIZE_LR,IMGSIZE_LRY
+
+if debug = 1 {
+	gsel BUF_S
+	gzoom IMGSIZE * 3,IMGSIZE * 2,BUF,0,0,IMGSIZE * 30,IMGSIZE * 20
+}
+
+screen LOG,LSCREEN_X,SCREEN_Y,4+8,gamescreen_x + SCREEN_X + 10,gamescreen_y;ログウィンドウ
+font MAINFONT
+objmode 2
+title GAME_TITLE + " - ログ"
+logtxt = GAME_TITLE + " - ログ"
+mesbox logtxt,LSCREEN_X,SCREEN_Y,0
+log_id = stat
+
+gosub *setting_open;設定ウィンドウを準備
+gsel SETTING,-1;設定ウィンドウを非表示に
+
+gsel GAME,1
+
+
+;ここから初期化
+;randomize ;使用しない
+
+;ここから本編
+gsel GAME
+font MAINFONT,FSIZE
+objmode 2
+mes game_name
+mes "起動中"
+gsel LOG
+printlog "起動中"
+wait 1
+mmplay TITLESE
+
+gsel INFO
+info_draw_once = 0
+gosub *info_draw
+info_draw_once = 1
+gsel GAME
+cls
+pos 0,0
+gmode 2;バッファ設定、clsやscreen度に必要
+
+gosub *draw_sp
+
+onexit gosub *exit
+
+await2 2500;起動画面を見せる
+gsel LOG
+printlog "起動しました"
+printlog "Hキーでヘルプが開きます"
+printlog "Cキーでクレジットを表示します"
+gsel GAME
+
+gosub *draw_bg;背景壁画
+
+onkey gosub *key_get ;キー割り込みを有効
+
+pos IMGLEFT,IMGCENTER_Y
+select = left
+gosub *imgcopy
+
+pos IMGCENTER,IMGCENTER_YL
+select = center
+gosub *imgcopy_L
+
+pos IMGRIGHT,IMGCENTER_Y
+select = right
+gosub *imgcopy
+
+gosub *draw_bg_ue
+
+while;無限ループ
+	playing = 0
+	miging = 0
+	if hayai = 1 : await 1
+	if autoplay = 1 : horyu = horyu_max + 1
+	if horyu > 0{
+		;ガチャ開始
+		playing = 1
+		horyu -= 1
+		kaiten += 1
+		kaiten_kei += 1
+		
+		gacha = rnd(kakuritsu);これが0なら当たりになる
+		if atari != 0 : gacha = 0
+		
+		reach_vs = rnd(100) + 1
+		if pocket = 1 : reach_vs = -1
+		;ここでリーチになるかどうかを決める
+		;reach_vsの値がリーチ確率（初期値は10）より小さかったらリーチになる
+		
+		gsel INFO
+		gosub *info_draw
+;		gsel GAME
+		if jitan = 1 and kaiten < tenjo : jitan = 0
+		if ( kaiten > tenjo and jitan = 0 ) or ( kaiten = tenjo ){
+			;時短突入演出
+			jitan = 1
+			gsel LOG
+			printlog "時短に入ります"
+			gsel GAME
+			mmplay REACHSE
+
+			if hayai = 0 {
+				repeat 33
+					gosub *draw_auto
+				loop
+			}
+			
+			dmmplay BGMTENJO;天井用BGMを再生
+		}
+		gsel GAME
+
+		if kaiten < tenjo{
+			;通常演出
+			if hayai = 0{
+				if bgmtrack > 5 : bgmtrack = 1
+				switch bgmtrack
+					case 1
+						dmmplay BGM1
+						swbreak
+					case 2
+						dmmplay BGM2
+						swbreak
+					case 3
+						dmmplay BGM3
+						swbreak
+					case 4
+						dmmplay BGM4
+						swbreak
+					case 5
+						dmmplay BGM5
+						swbreak
+					default
+						dialog "例外"
+						swbreak
+				swend
+				bgmtrack += 1
+			}
+		}else{
+			;遊タイム演出
+		}
+		repeat 160
+			if hayai = 1 : break
+			gsel GAME
+			redraw 0
+
+			left = (rnd(9)+1)
+			right = (rnd(9)+1)
+			center = (rnd(9)+1)
+
+			gmode 2
+			pos 0,0
+			gosub *draw_bg;背景壁画
+			
+			color 0,0,0;gmode前のおまじない
+			gmode 4,,,140;バッファ設定、clsやscreen度に必要
+			
+			pos IMGLEFT,IMGCENTER_Y
+			select = left
+			gosub *imgcopy
+			
+			pos IMGCENTER,IMGCENTER_YL
+			select = center
+			gosub *imgcopy_L
+			
+			pos IMGRIGHT,IMGCENTER_Y
+			select = right
+			gosub *imgcopy
+			
+			pos SCREEN_X - 50,30
+			mes "" + left + center + right
+
+			if gacha < kakuritsu / 3 {;当たりに近い1/3の確率でカットインを表示
+				gmode 2
+				if cnt > 40 and cnt < 140{;カットインを表示
+					pos 0,CUTIN_Y
+					gcopy BUF,0,IMGCUT,IMGCUT_X,IMGSIZE
+				}
+				if cnt = 40 : mmplay CUTSE1;カットイン音声を再生
+			}
+
+			gosub *draw_bg_ue
+			
+			redraw 1
+			await2 FL
+			if cnt > 30 and jitan = 1 : break;時短なら30ループで終わり
+		loop
+		;cls
+
+		redraw 1
+		pos SCREEN_X - 50,30
+		if gacha != 0{;外れ
+			if reach_vs < reach{;リーチ演出
+				reach_num = rnd(9) + 1
+				left = reach_num
+				right = reach_num
+				gsel LOG
+				printlog "リーチ！"
+				gsel GAME
+				
+				if hayai = 0{
+					dmmstop
+					mmplay REACHSE
+					dmmplay BATTLE1
+				}
+				
+				repeat 200
+					if hayai = 1 : break
+					gsel GAME
+					redraw 0
+					center = (rnd(9)+1)
+					
+					gmode 2
+					gosub *draw_bg;背景壁画
+
+					color 0,0,0;gmode前のおまじない
+					
+					gmode 2;バッファ設定、clsやscreen度に必要
+					pos IMGLEFT,IMGCENTER_Y
+					select = left
+					gosub *imgcopy
+					
+					gmode 4,,,100;バッファ設定、clsやscreen度に必要
+					pos IMGCENTER,IMGCENTER_YL
+					select = center
+					gosub *imgcopy_L
+					
+					gmode 2;バッファ設定、clsやscreen度に必要
+					pos IMGRIGHT,IMGCENTER_Y
+					select = right
+					gosub *imgcopy
+					
+					pos SCREEN_X - 50,30
+					mes "" + reach_num + center + reach_num
+
+					gosub *draw_bg_ue
+					
+					redraw 1
+					await2 FL
+				loop
+				
+				while
+					center = rnd(9) + 1
+					if center != reach_num : _break
+				wend
+				
+				redraw 0
+
+				playing = 0
+				gosub *draw_bg;背景壁画
+				
+				pos IMGLEFT,IMGCENTER_Y
+				select = left
+				gosub *imgcopy
+				
+				pos IMGCENTER,IMGCENTER_YL
+				select = center
+				gosub *imgcopy_L
+				
+				pos IMGRIGHT,IMGCENTER_Y
+				select = right
+				gosub *imgcopy
+				
+				pos SCREEN_X - 50,30
+				mes "" + reach_num + center + reach_num
+				gsel LOG
+				printlog "結果:" + reach_num + center + reach_num + "、回転数は" + kaiten + "、ランダム値は" + gacha
+				gsel GAME
+				
+				gosub *draw_bg_ue
+				
+				redraw 1
+				if hayai = 0{
+					dmmstop
+					mmplay HAZURE
+				}
+				pocket = 0;ポケットフラグをリセット
+				repeat 66
+					if hayai = 1 : break
+					gosub *draw_auto
+				loop
+				if jitan = 1 : dmmplay BGMTENJO
+			}else{;リーチではない
+				left = rnd(9) + 1
+				while
+					center = rnd(9) + 1
+					if center != left : _break
+				wend
+				while
+					right = rnd(9) + 1
+					if right != left and right != center : _break
+				wend
+
+				if hayai = 0 : mmplay SETSE
+				repeat 40
+					if hayai = 1 : break
+					gsel GAME
+					redraw 0
+
+					color 0,0,0;gmode前のおまじない
+					
+					gosub *draw_bg;背景壁画
+					
+					gmode 2;バッファ設定、clsやscreen度に必要
+					pos IMGLEFT,IMGCENTER_Y
+					select = left
+					gosub *imgcopy
+					
+					pos IMGCENTER,IMGCENTER_YL
+					gmode 4,,,100;バッファ設定、clsやscreen度に必要
+					select = (rnd(9)+1)
+					gosub *imgcopy_L
+
+					pos IMGRIGHT,IMGCENTER_Y
+					if cnt > 20{
+						gmode 2;バッファ設定、clsやscreen度に必要
+						select = right
+					}else{
+						gmode 4,,,100;バッファ設定、clsやscreen度に必要
+						select = (rnd(9)+1)
+					}
+					if cnt = 20 and hayai = 0 : mmplay SETSE
+					gosub *imgcopy
+					
+					pos SCREEN_X - 50,30
+					mes "" + (rnd(9)+1) + (rnd(9)+1) + (rnd(9)+1)
+
+					gosub *draw_bg_ue
+					
+					redraw 1
+					await2 FL
+				loop
+				
+				redraw 0
+				
+				gmode 2;バッファ設定、clsやscreen度に必要
+				playing = 0
+				gosub *draw_bg;背景壁画
+				
+				pos IMGLEFT,IMGCENTER_Y
+				select = left
+				gosub *imgcopy
+				
+				pos IMGCENTER,IMGCENTER_YL
+				select = center
+				gosub *imgcopy_L
+				
+				pos IMGRIGHT,IMGCENTER_Y
+				select = right
+				gosub *imgcopy
+				
+				pos SCREEN_X - 50,30
+				mes "" + left + center + right
+				gsel LOG
+				printlog "結果:" + left + center + right + "、回転数は" + kaiten + "、ランダム値は" + gacha
+				gsel GAME
+
+				gosub *draw_bg_ue
+				
+				redraw 1
+
+				if jitan = 0 and hayai = 0{
+					dmmstop
+					mmplay HAZURE
+					repeat 66
+						if hayai = 1 : break
+						gosub *draw_auto
+					loop
+				}else{
+					repeat 33
+						if hayai = 1 : break
+						gosub *draw_auto
+					loop
+				}
+			}
+		}else{;当たり
+			reach_num = rnd(9) + 1
+			left = reach_num
+			right = reach_num
+			center = reach_num
+			gsel LOG
+			printlog "リーチ！"
+			gsel GAME
+			if hayai = 0{
+				dmmstop
+				mmplay REACHSE
+				dmmplay BATTLE1
+			}
+			
+			repeat 200
+				if hayai = 1 : break
+				gsel GAME
+				redraw 0
+
+				center = (rnd(9)+1)
+				
+				gmode 2
+				pos 0,0
+				gosub *draw_bg;背景壁画
+				
+				gmode 2;バッファ設定、clsやscreen度に必要
+				pos IMGLEFT,IMGCENTER_Y
+				select = reach_num
+				gosub *imgcopy
+				
+				gmode 4,,,140;バッファ設定、clsやscreen度に必要
+				pos IMGCENTER,IMGCENTER_YL
+				select = center
+				gosub *imgcopy_L
+				
+				gmode 2;バッファ設定、clsやscreen度に必要
+				pos IMGRIGHT,IMGCENTER_Y
+				select = reach_num
+				gosub *imgcopy
+				
+				pos SCREEN_X - 50,30
+				mes "" + reach_num + center + reach_num
+
+				gosub *draw_bg_ue
+				
+				redraw 1
+				await2 FL
+			loop
+
+			redraw 0
+			
+			gmode 2;バッファ設定、clsやscreen度に必要
+			playing = 0
+			gosub *draw_bg;背景壁画
+			
+			pos IMGLEFT,IMGCENTER_Y
+			select = reach_num
+			gosub *imgcopy
+			
+			pos IMGCENTER,IMGCENTER_YL
+			select = reach_num
+			gosub *imgcopy_L
+			
+			pos IMGRIGHT,IMGCENTER_Y
+			select = reach_num
+			gosub *imgcopy
+			
+			pos SCREEN_X - 50,30
+			mes "" + reach_num + reach_num + reach_num
+
+			center = reach_num
+			
+			gsel LOG
+			printlog "結果:" + reach_num + reach_num + reach_num + "で当たり！回転数は" + kaiten + "、ランダム値は" + gacha
+			gsel GAME
+
+			gosub *draw_bg_ue
+			
+			redraw 1
+			atari = 0
+			atari_kai += 1
+			kaiten_kei2 += kaiten
+			kaiten = 0;回転数は0に、累計回転数は維持する
+
+			gsel INFO
+			gosub *info_draw
+			gsel GAME
+
+			if hayai = 0 : dmmstop
+			jitan = 0;時短を解除
+
+			;ここから当たり演出
+			gosub *atari_sub
+		}
+	}else{
+		;保留なし
+		gosub *draw_auto
+	}
+wend
+stop
+
+*key_get;キー入力割込み
+	gsel LOG
+	if iparam != 0 : printlog "キー入力:" + iparam
+	putkey = iparam
+	gsel MAIN
+	
+	switch putkey
+		case 32;スペース
+			;保留を増やす
+			horyu += 1
+			if horyu > horyu_max : horyu = horyu_max;保留制限
+			gsel LOG
+			printlog "へそに入りました、現在の保留" + horyu
+			gsel GAME
+			swbreak
+		case 90;zキー
+			;ポケットイン
+			gsel LOG
+			printlog "ポケットに入りました、10玉配布します"
+			pocket = 1
+			gsel GAME
+			swbreak
+		case 65;aキー
+			;自動プレイ
+			if autoplay = 0{
+				autoplay = 1
+				gsel LOG
+				printlog "オートプレイは有効です"
+				gsel GAME
+			}else{
+				autoplay = 0
+				gsel LOG
+				printlog "オートプレイは無効です"
+				gsel GAME
+			}
+			
+			swbreak
+		case 86;vキー
+			;右打ち
+			gsel LOG
+			if miging = 0{
+				;左打ちに戻してください
+				printlog "左打ちに戻してください"
+				if hidari_cnt < 100 {
+					hidari_cnt = 140
+					mmplay LEFTSE;左打ちを再生
+				}
+			}else{
+				printlog "右に入りました"
+			}
+			gsel GAME
+			swbreak
+		case 13;エンターキー
+			;ボタンを押せ！
+			gsel LOG
+			printlog "ボタンが押されました"
+			gsel GAME
+			if kokuching = 1{
+				mmplay SETSE
+				if kokuchi = 0 : kokuchi = 1 : else : kokuchi = 0
+			}
+			swbreak
+		case 48;0（ゼロ）キー
+			;強制当たり
+			gsel LOG
+			printlog "強制当たりが割り込まれました"
+			gsel GAME
+			atari = 1
+			if horyu = 0 : horyu = 1
+			swbreak
+		case 77;mキー
+			;全ウィンドウを最前面に
+			gsel GAME,1
+			kijun_x_hidari = ginfo_wx1
+			kijun_x_migi = ginfo_wx2
+			kijun_y_ue = ginfo_wy1
+			kijun_y_shita = ginfo_wy2
+			if kijun_x_hidari < 0 : kijun_x_hidari = 0
+			if kijun_x_migi < 0 : kijun_x_migi = 0
+			if kijun_y_ue < 100 : kijun_y_ue = 0
+			if kijun_y_shita < 0 : kijun_y_shita = 0
+			gsel INFO,1
+			width ,,kijun_x_hidari,kijun_y_ue - 40 - ISCREEN_Y
+			gsel LOG,1
+			width ,,kijun_x_migi + 10,kijun_y_ue
+			gsel GAME,1
+			swbreak
+		case 9;Tabキー
+			;早送り
+			gsel LOG
+			if hayai = 0 {
+				hayai = 1
+				printlog "早送りを有効にします"
+			}else{
+				hayai = 0
+				printlog "早送りを無効にします"
+			}
+			gsel GAME
+			swbreak
+		case 76;lキー
+			;ログを隠す
+			if loghide = 0{
+				loghide = 1
+				gsel LOG,-1
+				gsel GAME,1
+			}else{
+				loghide = 0
+				gsel LOG,1
+				gsel GAME,1
+			}
+			swbreak
+		case 82;rキー
+			;リセット
+			kaiten = 0;回転数
+			kaiten_kei = 0;累計回転数
+			kaiten_kei2 = 0;平均当たり回数計算用
+			atari_kai = 0;当たり数
+			horyu = 0;保留の初期値
+			
+			gsel LOG
+			printlog "設定をリセットしました"
+			gsel INFO
+			gosub *info_draw
+			gsel GAME
+			swbreak
+		case 72;hキー
+			;ヘルプ
+			dialog {"
+						基本プレイ
+						スペースキーでへそに球が入ります
+						Zキーでポケットに入ります
+						エンターキーでポケットに入ります
+						Vキーで右打ちします
+
+						コマンド
+						Aキーでオートプレイになります
+						0（ゼロ）キーで強制的に当たります
+						Lキーでログを非表示にします
+						Tabキーで早送りします（オートプレイ推奨）
+
+						ヘルプ
+						Hキーでこのヘルプを開きます
+
+						その他
+						Mキーでウィンドウを整理します
+						O（オー）キーでオプションを開きます
+						Cキーでクレジットを表示します
+						\\キーで終了します
+					"},,"ヘルプ"
+			gsel GAME
+			swbreak
+		case 67;cキー
+			;クレジット
+			dialog GAME_TITLE + " - " + VERSION + "\n\n製作者:\n" + OWNER + "\n\n" + "著作権表記:\n" + CREDIT,,GAME_TITLE + " - クレジット"
+			gsel GAME
+			swbreak
+		case 79;oキー
+			;設定
+			onkey 0;キー割り込み停止
+			gosub *setting_open
+			;onexit gosub *noexit
+			swbreak
+		case 92;\キー
+			;終了
+			gosub *exit
+			swbreak
+		default
+			;無効入力とする
+			swbreak
+	swend
+	return
+
+*exit;終了割込み
+	dialog "終了しますか？\n（どのウィンドウを閉じてもプログラム本体ごと終了します）",2,"終了確認"
+	if stat = 6{
+		end
+	}
+	return
+
+*noexit;バツボタンを押させない
+	return
+
+*info_draw;情報パネル書き込み
+	redraw 0
+	cls 4
+	color 255,255,255
+	font MAINFONT,FSIZE
+	pos 26,ISCREEN_Y - FSIZE * 2 : mes "現在の回転数:",1
+	font MAINFONT,FSIZE_KAITEN
+	pos ginfo_cx + 10,ISCREEN_Y / 2 - FSIZE_KAITEN / 2 : mes kaiten
+	font MAINFONT,FSIZE
+	if atari_kai = 0 : atariritsu = 0 : else : atariritsu = kaiten_kei2 / atari_kai
+	pos SCREEN_X / 3 - 50,ISCREEN_Y / 2 - FSIZE / 2 * 3: mes "累計当たり回数:" + atari_kai + "回\n累計回転数:" + kaiten_kei + "回\n平均当たり回転数:" + atariritsu + "回"
+	pos SCREEN_X / 3 * 2 - 50,ISCREEN_Y / 2 - FSIZE / 2 * 3: mes "当選確率:1/" + kakuritsu + "\n遊タイム必要回転数:" + tenjo + "回\nラッシュ突入・継続確率:" + rush_kakuritsu + "%・" + rush_next + "%"
+	redraw 1
+	return
+
+*setting_hidden
+	gsel SETTING,-1
+	gsel INFO
+	gosub *info_draw
+	gsel GAME
+	onexit gosub *exit
+	onkey 1;キー割り込み再開
+	return
+	
+*imgcopy;selectを先に用意する必要あり
+	gcopy BUF,IMGSIZE * select,IMGCHA,IMGSIZE,IMGSIZE
+	gcopy BUF,IMGSIZE * select,IMGNUM,IMGSIZE,IMGSIZE
+	return
+	
+*imgcopy_L;selectを先に用意する必要あり
+	gcopy BUF,IMGSIZE_L * select,IMGCHA_L,IMGSIZE_L,IMGSIZE_L
+	gcopy BUF,IMGSIZE_L * select,IMGNUM_L,IMGSIZE_L,IMGSIZE_L
+	return
+	
+*draw_bg;背景壁画
+	gsel GAME
+	pos 0,0
+	gmode 2
+	gcopy BUF,0,IMGBG,SCREEN_X,SCREEN_Y
+	pos -10,10
+	gcopy BUF,IMGTITLE,IMGOTHER,IMGSIZE * 3,IMGSIZE
+	pos IMGCENTER_S,SCREEN_Y - IMGSIZE + 50
+	gcopy BUF,IMGSARA_X,IMGOTHER,IMGSIZE,IMGSIZE
+	if playing = 1 : gcopy BUF,IMGHORYU_X,IMGOTHER,IMGSIZE,IMGSIZE
+	repeat horyu_max
+		;皿を最大保留数だけ壁画
+		if cnt * 2 < horyu_max {
+			pos IMGCENTER_S - ( IMGSIZE / 3 )- 30 - ( cnt * ( IMGSIZE / 3 ) ),SCREEN_Y - IMGSIZE + 150
+		}else{
+			pos IMGCENTER_S - ( IMGSIZE / 3 )- 30 - ( ( cnt - horyu_max / 2 ) * ( IMGSIZE / 3 ) ),SCREEN_Y - IMGSIZE + 100
+		}
+		gcopy BUF,IMGSARA_X,IMGOTHER_S,IMGSIZE / 2,IMGSIZE / 2
+	loop
+	repeat horyu
+		;保留の溜まってる回数だけ壁画
+		if cnt * 2 < horyu_max {
+			pos IMGCENTER_S - ( IMGSIZE / 3 )- 30 - ( cnt * ( IMGSIZE / 3 ) ),SCREEN_Y - IMGSIZE + 150
+		}else{
+			pos IMGCENTER_S - ( IMGSIZE / 3 )- 30 - ( ( cnt - horyu_max / 2 ) * ( IMGSIZE / 3 ) ),SCREEN_Y - IMGSIZE + 100
+		}
+		gcopy BUF,IMGHORYU_X,IMGOTHER_S,IMGSIZE / 2,IMGSIZE / 2
+	loop
+	if miging = 1{
+		pos SCREEN_X - ( IMGSIZE_LR / 4 ),0 + 20
+		gcopy BUF,IMGRIGHT_X,IMGOTHER_S,IMGSIZE_LR / 4,IMGSIZE_LRY / 4
+	}
+	return
+
+*draw_bg_ue;背景（上モノ）壁画
+	if hidari_cnt > 0 {
+		;左打ちに戻してくださいを表示
+		hidari_cnt -= 1
+		if ( hidari_cnt / 10 ) \ 2 = 1 {
+			gmode 2
+			pos SCREEN_X / 2 - ( IMGSIZE_LR / 2 ),IMGCENTER_YLR
+			gcopy BUF,IMGLEFT_X,IMGOTHER,IMGSIZE_LR,IMGSIZE_LRY
+		}
+	}
+	if migi_cnt > 0 {
+		;右打ちしてね！を表示
+		migi_cnt -= 1
+		if ( migi_cnt / 10 ) \ 2 = 1 {
+			gmode 2
+			pos SCREEN_X / 2 - ( IMGSIZE_LR / 2 ),IMGCENTER_YLR
+			gcopy BUF,IMGRIGHT_X,IMGOTHER,IMGSIZE_LR,IMGSIZE_LRY
+		}
+	}
+	return
+
+*draw_auto;自動で壁画して待つ
+	gsel GAME
+	redraw 0
+	
+	gosub *draw_bg
+	
+	pos IMGLEFT,IMGCENTER_Y
+	select = left
+	gosub *imgcopy
+	
+	pos IMGCENTER,IMGCENTER_YL
+	select = center
+	gosub *imgcopy_L
+	
+	pos IMGRIGHT,IMGCENTER_Y
+	select = right
+	gosub *imgcopy
+	
+	gosub *draw_bg_ue
+	redraw 1
+
+	await2 FL
+	return
+	
+
+*setting_open
+	screen SETTING,SSCREEN_X,300,2;設定ウィンドウ
+	if info_draw_once = 1{
+		;起動時のリセットが終わっている
+		gsel SETTING,2
+	}
+	font MAINFONT
+	objmode 2
+	objsize 50
+	title GAME_TITLE + " - 設定"
+	mes "各種設定\n"
+	
+	pos 0
+	mes "当選確率（1/n）:",1
+	pos SSCREEN_X - 50
+	input kakuritsu
+	pos 0
+	mes "外れ演出時のリーチ確率（%）:",1
+	pos SSCREEN_X - 50
+	input reach
+	pos 0
+	mes "最大保留（個）:",1
+	pos SSCREEN_X - 50
+	input horyu_max
+	pos 0
+	mes "遊タイム必要回転数（回）:",1
+	pos SSCREEN_X - 50
+	input tenjo
+	pos 0
+	mes "当たり時の出玉（玉）:",1
+	pos SSCREEN_X - 50
+	input dedama
+	pos 0
+	mes "ラッシュ突入確率（%）:",1
+	pos SSCREEN_X - 50
+	input rush_kakuritsu
+	pos 0
+	mes "ラッシュ継続確率（%）:",1
+	pos SSCREEN_X - 50
+	input rush_next
+	pos 0
+	mes "ラッシュ時の出玉（玉）:",1
+	pos SSCREEN_X - 50
+	input rush_dedama
+	pos 0
+	mes "ラッシュ継続抽選回数（回）:",1
+	pos SSCREEN_X - 50
+	input rush_kaisu
+	pos 0
+	mes "当たり時の出玉（玉）:",1
+	pos SSCREEN_X - 50
+	input dedama
+	
+	pos 0
+	objsize 100
+	button gosub "設定を閉じる",*setting_hidden
+	gsel GAME
+	return
+
+*draw_sp
+	pos 0,0
+	gcopy BUF,IMGSP,IMGBG,SCREEN_X,SCREEN_Y
+	pos -10,10
+	gcopy BUF,IMGTITLE,IMGOTHER,IMGSIZE * 3,IMGSIZE
+	return
+
+*atari_sub
+	;当たりの音
+	repeat 7
+		if hayai = 1 : break
+		mmplay REACHSE
+		await2 70
+	loop
+	
+	hidari_cnt = 0;左打ちしてくださいを終了
+	;当たり演出
+	repeat 20
+		if hayai = 1: break
+		gosub *draw_auto
+	loop
+
+	;告知モード選択
+	dmmplay ABATTLEMAE
+	
+	kokuchi = 0
+	kokuching = 1
+	
+	rep = 499.0
+	repeat rep
+		if hayai = 1 : break
+		redraw 0
+		color 0,0,0
+		boxf
+		
+		pos 0,0
+		if kokuchi = 0 : gmode 2 : else : gmode 3,,,128;gmodeの3は半透明コピー
+		gcopy BUF,IMGKOKUCHI_X,IMGBG,SCREEN_X / 2,SCREEN_Y;告知画面の左半分
+		
+		pos SCREEN_X / 2,0
+		if kokuchi = 1 : gmode 2 : else : gmode 3,,,128;gmodeの3は半透明コピー
+		gcopy BUF,IMGKOKUCHI_X + ( SCREEN_X / 2 ),IMGBG,SCREEN_X / 2,SCREEN_Y;告知画面の右半分
+
+		gmode 2
+		pos SCREEN_X / 2 - ( SCREEN_X / 4 ),0
+		gcopy BUF,IMGKOKUCHI_X + SCREEN_X,IMGBG,SCREEN_X / 2,SCREEN_Y;告知ライザー
+		pos IMGCENTER_S,IMGCENTER_Y
+		gcopy BUF,IMGPUSH,IMGOTHER,IMGSIZE,IMGSIZE;プッシュボタン
+
+		color 30,30,30
+		boxf IMGCENTER_S,IMGCENTER_Y + ( IMGSIZE * 1 ) - 40,IMGCENTER_S + IMGSIZE,IMGCENTER_Y + ( IMGSIZE * 1 ) + 30 - 40
+		color 128,128,128
+		boxf IMGCENTER_S + 10,IMGCENTER_Y + ( IMGSIZE * 1 ) + 10 - 40,IMGCENTER_S + IMGSIZE - 10,IMGCENTER_Y + ( IMGSIZE * 1 ) + 30 - 10- 40
+		color 255,255,255
+		if cnt = 0 {
+			boxf IMGCENTER_S + 10,IMGCENTER_Y + ( IMGSIZE * 1 ) + 10 - 40,IMGCENTER_S + IMGSIZE - 10,IMGCENTER_Y + ( IMGSIZE * 1 ) + 30 - 10 - 40
+		}else{
+			boxf IMGCENTER_S + 10,IMGCENTER_Y + ( IMGSIZE * 1 ) + 10 - 40,IMGCENTER_S + IMGSIZE - 10 - ( ( ( IMGSIZE - 20 ) / rep ) * cnt ),IMGCENTER_Y + ( IMGSIZE * 1 ) + 30 - 10 - 40
+		}
+		
+		redraw 1
+		await2 FL
+	loop
+
+	kokuching = 0
+	
+	miging = 1;右打ちモード
+	mmplay RIGHTSE;右打ちなのだ！
+	migi_cnt = 99
+	repeat migi_cnt
+		redraw 0
+		color 0,0,0
+		boxf
+		
+		pos 0,0
+		if kokuchi = 0 : gmode 2 : else : gmode 3,,,128;gmodeの3は半透明コピー
+		gcopy BUF,IMGKOKUCHI_X,IMGBG,SCREEN_X / 2,SCREEN_Y;告知画面の左半分
+		
+		pos SCREEN_X / 2,0
+		if kokuchi = 1 : gmode 2 : else : gmode 3,,,128;gmodeの3は半透明コピー
+		gcopy BUF,IMGKOKUCHI_X + ( SCREEN_X / 2 ),IMGBG,SCREEN_X / 2,SCREEN_Y;告知画面の右半分
+
+		gmode 2
+		pos SCREEN_X / 2 - ( SCREEN_X / 4 ),0
+		gcopy BUF,IMGKOKUCHI_X + SCREEN_X,IMGBG,SCREEN_X / 2,SCREEN_Y;告知ライザー
+		/*
+		pos IMGCENTER_S,IMGCENTER_Y
+		gcopy BUF,IMGPUSH,IMGOTHER,IMGSIZE,IMGSIZE;プッシュボタン
+
+		color 30,30,30
+		boxf IMGCENTER_S,IMGCENTER_Y + ( IMGSIZE * 1 ) - 40,IMGCENTER_S + IMGSIZE,IMGCENTER_Y + ( IMGSIZE * 1 ) + 30 - 40
+		color 128,128,128
+		boxf IMGCENTER_S + 10,IMGCENTER_Y + ( IMGSIZE * 1 ) + 10 - 40,IMGCENTER_S + IMGSIZE - 10,IMGCENTER_Y + ( IMGSIZE * 1 ) + 30 - 10- 40
+		color 255,255,255
+		if cnt = 0 {
+			boxf IMGCENTER_S + 10,IMGCENTER_Y + ( IMGSIZE * 1 ) + 10 - 40,IMGCENTER_S + IMGSIZE - 10,IMGCENTER_Y + ( IMGSIZE * 1 ) + 30 - 10 - 40
+		}else{
+			boxf IMGCENTER_S + 10,IMGCENTER_Y + ( IMGSIZE * 1 ) + 10 - 40,IMGCENTER_S + IMGSIZE - 10 - ( ( ( IMGSIZE - 20 ) / rep ) * cnt ),IMGCENTER_Y + ( IMGSIZE * 1 ) + 30 - 10 - 40
+		}
+		*/
+
+		gosub *draw_bg_ue
+		
+		redraw 1
+		await2 FL
+	loop
+	;rash_kakuritsu = 60;ラッシュ突入確率（%）
+	;rash_next = 80;ラッシュ継続確率（%）
+	;rash_kaisu = 8;ラッシュ継続抽選回数
+
+	if rnd(100) - rush_kakuritsu < 0 {
+		;ラッシュ確定
+		rush_atari = 1
+		kaiten_atari = rnd(rush_kaisu);何回目で当たるか
+	}else{
+		;おもんない方の当たり
+		rush_atari = 0
+		kaiten_atari = rush_kaisu + 10;例外処理で落とす
+	}
+	
+	if kokuchi = 0{
+		;バトル告知
+		repeat rush_kaisu
+			;バトル中
+			
+			if cnt = kaiten_atari : break
+			gsel LOG
+			printlog "抽選" + ( cnt + 1 ) + "回目:外れ"
+			gsel GAME
+		loop
+	}else{
+		;完全告知
+		repeat rush_kaisu
+			;バトル中
+			
+			if cnt = kaiten_atari : break
+			gsel LOG
+			printlog "抽選" + ( cnt + 1 ) + "回目:外れ"
+			gsel GAME
+		loop
+	}
+	if rush_atari = 1{
+		;ラッシュ演出
+		gsel LOG
+		printlog "ラッシュに突入しました"
+		gsel GAME
+		rush_start_time = now_ut
+		rush_bgm = 0
+		rush_sum = 0
+		repeat;無限ループ
+			rush_rnd = rnd(rush_dedama / 5)
+			rush_output = rush_dedama - ( rush_dedama / 10 ) + rush_rnd
+			gsel LOG
+			printlog "ラッシュ" + ( cnt + 1 ) + "回目、" + rush_output + "玉配布します"
+			gsel GAME
+			rush_sum += rush_output
+			rush_repeat = cnt + 1
+			switch rush_bgm
+				case 0
+					dmmplay RUSH1
+					swbreak
+				case 1
+					dmmplay RUSH2
+					swbreak
+				default
+					dmmplay RUSH1
+					swbreak
+			swend
+			rush_bgm += 1
+			if rush_bgm > 5 : rush_bgm = 0
+			await2 1000;デバッグ用
+			if rnd(100) - rush_next > 0 : break;ラッシュ終了
+			await 1
+		loop
+		
+		rush_end_time = now_ut
+		rush_time = rush_end_time - rush_start_time
+		rush_min = 0
+		rush_sec = 0
+		repeat
+			if rush_time >= 60 {
+				rush_time -= 60
+				rush_min += 1
+			}else{
+				rush_sec = rush_time
+				break
+			}
+		loop
+		repeat 399
+			if hayai = 1 : break
+			;じゃけんまたラッシュしましょうね～の画面
+			redraw 0
+			color 255,255,255
+			boxf
+			color 0,0,0
+			pos 0,0
+			mes "TOTAL:" + rush_sum + "c"
+			mes "TIME:" + rush_min + "分" + rush_sec + "秒"
+			mes "ラッシュ継続回数は" + rush_repeat + "回"
+			redraw 1
+			await2 FL
+		loop
+	}else{
+		;残念！また遊んでね！
+		gsel LOG
+		printlog "ラッシュに突入しませんでした"
+		gsel GAME
+	}
+	
+	;タイトル画面
+	if hayai = 0 {
+		mmstop
+		dmmstop
+	}
+	pos 0,0
+	gmode 2;バッファ設定、clsやscreen度に必要
+	gosub *draw_sp
+	if hayai = 0 {
+		mmplay TITLESE
+		await2 2500
+	}
+	
+	return
+
+*Donotuse
+	dialog "さては貴様デコンパイルしたな？^^"
+	return
+
+*Nabeatsu
+	if nabeatsu_num \ 3 = 0 : dialog "ｻﾝｯ！！！"
+	return
